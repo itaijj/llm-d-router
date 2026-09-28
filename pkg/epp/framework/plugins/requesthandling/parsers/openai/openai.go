@@ -1,5 +1,6 @@
 /*
 Copyright 2025 The Kubernetes Authors.
+Copyright 2026 The llm-d Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -33,6 +34,7 @@ import (
 	"github.com/llm-d/llm-d-router/pkg/epp/framework/common/request"
 	fwkplugin "github.com/llm-d/llm-d-router/pkg/epp/framework/interface/plugin"
 	fwkrh "github.com/llm-d/llm-d-router/pkg/epp/framework/interface/requesthandling"
+	"github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/requesthandling/parsers"
 	parserutil "github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/requesthandling/parsers/util"
 )
 
@@ -43,6 +45,7 @@ const (
 	responsesAPI       = "responses"
 	chatCompletionsAPI = "chat/completions"
 	completionsAPI     = "completions"
+	promptField        = "prompt"
 	embeddingsAPI      = "embeddings"
 	// imagesGenerationsAPI is the OpenAI-compatible image generation endpoint/
 	imagesGenerationsAPI = "images/generations"
@@ -64,22 +67,23 @@ const (
 	inputTokensField         = "input_tokens"
 	completionTokensField    = "completion_tokens"
 	outputTokensField        = "output_tokens"
-	promptTokensDetailsField = "prompt_tokens_details"
-	inputTokensDetailsField  = "input_tokens_details"
-	cachedTokensField        = "cached_tokens"
+	promptTokensDetailsField = "prompt_tokens_details" //nolint:gosec // G101: JSON field name, not a credential
+	inputTokensDetailsField  = "input_tokens_details"  //nolint:gosec // G101: JSON field name, not a credential
+	cachedTokensField        = "cached_tokens"         //nolint:gosec // G101: JSON field name, not a credential
 	totalTokensField         = "total_tokens"
 
 	// Text to speech api response format:
 	// https://docs.vllm.ai/projects/vllm-omni/en/latest/serving/speech_api/#response-format
-	vllmOmniInputTokensHeader  = "x-vllm-omni-input-tokens"
-	vllmOmniOutputTokensHeader = "x-vllm-omni-output-tokens"
-	vllmOmniTotalTokensHeader  = "x-vllm-omni-total-tokens"
+	vllmOmniInputTokensHeader  = "x-vllm-omni-input-tokens"  //nolint:gosec // G101: HTTP header name, not a credential
+	vllmOmniOutputTokensHeader = "x-vllm-omni-output-tokens" //nolint:gosec // G101: HTTP header name, not a credential
+	vllmOmniTotalTokensHeader  = "x-vllm-omni-total-tokens"  //nolint:gosec // G101: HTTP header name, not a credential
 )
 
 // compile-time type validation
 var (
 	_ fwkrh.Parser            = &OpenAIParser{}
 	_ fwkrh.ModelNameRewriter = &OpenAIParser{}
+	_ fwkrh.PriorityRewriter  = &OpenAIParser{}
 )
 
 // OpenAIParser implements the fwkrh.Parser interface for OpenAI API
@@ -132,7 +136,11 @@ func (p *OpenAIParser) WithName(name string) *OpenAIParser {
 
 // ParseRequest parses the request body and headers and returns a map representation.
 func (p *OpenAIParser) ParseRequest(ctx context.Context, body []byte, headers map[string]string) (*fwkrh.ParseResult, error) {
-	apiType := determineAPITypeFromPath(request.GetRequestPath(headers))
+	path := request.GetRequestPath(headers)
+	if request.MatchPathSuffix(path, chatCompletionsAPI+"/render") || request.MatchPathSuffix(path, completionsAPI+"/render") {
+		return parserutil.ParseRenderRequest(body)
+	}
+	apiType := determineAPITypeFromPath(path)
 	if apiType == imagesEditsAPI {
 		return parseImagesEditsRequest(body, headers)
 	}
@@ -141,9 +149,13 @@ func (p *OpenAIParser) ParseRequest(ctx context.Context, body []byte, headers ma
 		return nil, fmt.Errorf("error extracting request body: %w", err)
 	}
 
-	rawField := tokenInputField(extractedBody)
 	var bodyMap fwkrh.PayloadMap
-	if rawField == "" {
+	if apiType == chatCompletionsAPI || apiType == completionsAPI {
+		var payload map[string]any
+		payload, err = parserutil.UnmarshalEnvelope(body, promptField)
+		bodyMap = fwkrh.PayloadMap(payload)
+		extractedBody.RawBody = body
+	} else if rawField := tokenInputField(extractedBody); rawField == "" {
 		bodyMap = make(fwkrh.PayloadMap)
 		err = parserutil.Unmarshal(body, &bodyMap)
 	} else {
@@ -177,8 +189,6 @@ func isStreamingRequest(apiType string, bodyMap map[string]any) bool {
 
 func tokenInputField(body *fwkrh.InferenceRequestBody) string {
 	switch {
-	case body.Completions != nil && len(body.Completions.Prompt.TokenIDs) > 0:
-		return "prompt"
 	case body.Embeddings != nil && len(body.Embeddings.Input.TokenIDs) > 0:
 		return "input"
 	default:
@@ -194,6 +204,14 @@ func (p *OpenAIParser) RewriteModelName(payload fwkrh.MarshalablePayload, model 
 	}
 	m["model"] = model
 	return m, nil
+}
+
+// RewritePriority removes any client-supplied priority from the
+// OpenAI-compatible request payload and writes the resolved EPP priority. The
+// director only calls this when priority propagation is enabled; see
+// parsers.RewritePriority for the cross-backend priority semantics.
+func (p *OpenAIParser) RewritePriority(ctx fwkrh.PriorityRewriteContext, payload fwkrh.MarshalablePayload, priority int) (fwkrh.MarshalablePayload, bool, error) {
+	return parsers.RewritePriority(ctx, payload, priority)
 }
 
 // maxOutputTokensForAPI normalizes the per-API output-token cap field into a
