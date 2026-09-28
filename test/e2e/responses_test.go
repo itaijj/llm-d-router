@@ -30,6 +30,8 @@ import (
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
+
+	"github.com/llm-d/llm-d-router/test/e2e/utils/standalone"
 )
 
 const (
@@ -118,9 +120,8 @@ var _ = ginkgo.Describe("OpenResponses compliance: /v1/responses", ginkgo.Ordere
 	// simulator, which implements the full ResponseResource contract.
 
 	ginkgo.BeforeAll(func() {
-		createInferencePool(1)
 		createModelServersDecode(1)
-		createEndPointPicker(simpleConfig)
+		standalone.Create(standaloneConfig(), simpleConfig, 1, 8000)
 	})
 
 	// openresponses id: basic-response
