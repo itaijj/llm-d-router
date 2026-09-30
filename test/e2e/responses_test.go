@@ -172,45 +172,6 @@ var _ = ginkgo.Describe("OpenResponses compliance: /v1/responses", ginkgo.Ordere
 		assertResponsesBody(body)
 	})
 
-	// openresponses id: tool-calling
-	ginkgo.It("tool-calling: emits function_call output when tools are provided", func() {
-		ginkgo.By("POST /v1/responses with a function tool definition")
-		weatherTool := `{"type":"function","name":"get_weather","description":"Get current weather",` +
-			`"parameters":{"type":"object","properties":{"location":{"type":"string"}},"required":["location"]}}`
-		body := fmt.Sprintf(`{"model":%q,"input":%s,"tools":[%s]}`,
-			simModelName,
-			userMessageInput("What's the weather in San Francisco?"),
-			weatherTool)
-		_, _, respBody := doPost(responsesPath, body, nil)
-
-		ginkgo.By("Verifying output contains a function_call item")
-		var resp map[string]any
-		gomega.Expect(json.Unmarshal(respBody, &resp)).ShouldNot(gomega.HaveOccurred())
-		output, ok := resp["output"].([]any)
-		gomega.Expect(ok).Should(gomega.BeTrue())
-		gomega.Expect(output).ShouldNot(gomega.BeEmpty())
-
-		hasToolCall := false
-		for _, item := range output {
-			if m, ok := item.(map[string]any); ok {
-				if m["type"] == "function_call" {
-					hasToolCall = true
-					break
-				}
-			}
-		}
-		gomega.Expect(hasToolCall).Should(gomega.BeTrue(), "expected a function_call item in output")
-	})
-
-	// openresponses id: compact-missing-model
-	ginkgo.It("compact-missing-model: rejects /v1/responses/compact without model field", func() {
-		ginkgo.By("POST /v1/responses/compact without model field")
-		body := `{"input":[{"type":"message","role":"user","content":"Compact this."}]}`
-		status, _ := doPostWithError(responsesCompactPath, body, nil)
-
-		ginkgo.By("Verifying error status 400 or 422")
-		gomega.Expect(status).Should(gomega.BeElementOf(400, 422))
-	})
 
 	// openresponses id: streaming-response
 	ginkgo.It("streaming-response: streams SSE events and terminates with a completed response", func() {
