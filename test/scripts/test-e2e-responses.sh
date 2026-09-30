@@ -33,6 +33,9 @@ echo "Running OpenResponses compliance e2e tests (simulator backend)"
 export VLLM_RENDER_IMAGE="${VLLM_IMAGE}"
 export LOAD_VLLM_RENDER_IMAGE=false
 
+# Prepare the local chart dependency before parallel workers render it.
+helm dependency build --skip-refresh "${DIR}/../../config/charts/llm-d-router-standalone"
+
 ginkgo run \
   --procs="${E2E_NUM_PROCS:-1}" \
   --timeout 45m \
